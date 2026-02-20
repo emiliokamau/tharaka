@@ -18,8 +18,6 @@ All features accessible from: http://localhost:5000
 
 from flask import Flask, render_template, request, jsonify, session, redirect, url_for
 from flask_cors import CORS
-from flask_sqlalchemy import SQLAlchemy
-from werkzeug.security import generate_password_hash, check_password_hash
 from datetime import datetime, timedelta
 import jwt
 import json
@@ -27,6 +25,7 @@ import math
 import os
 from functools import wraps
 from predict_risk import AccidentPredictor
+from database import db, Driver, DrivingSession, HealthRecord, init_db
 
 # ============================================================================
 # INITIALIZE FLASK APP
@@ -41,8 +40,8 @@ app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///drivers.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['JWT_SECRET_KEY'] = 'jwt-secret-key-2024'
 
-# Initialize database and predictor
-db = SQLAlchemy(app)
+# Initialize database with app
+db.init_app(app)
 predictor = AccidentPredictor()
 
 print("""
@@ -65,71 +64,8 @@ print("""
     
     Navigate: Register → Login → Dashboard → Features
     Database: SQLite (drivers.db)
+    Database Models: Imported from database.py
 """)
-
-# ============================================================================
-# DATABASE MODELS
-# ============================================================================
-
-class Driver(db.Model):
-    """Driver profile model"""
-    id = db.Column(db.Integer, primary_key=True)
-    username = db.Column(db.String(80), unique=True, nullable=False)
-    email = db.Column(db.String(120), unique=True, nullable=False)
-    password_hash = db.Column(db.String(255), nullable=False)
-    full_name = db.Column(db.String(120))
-    phone = db.Column(db.String(20))
-    license_number = db.Column(db.String(50), unique=True)
-    vehicle_type = db.Column(db.String(50))
-    registration_date = db.Column(db.DateTime, default=datetime.utcnow)
-    total_driving_hours = db.Column(db.Float, default=0)
-    fatigue_level = db.Column(db.Integer, default=0)
-    last_fatigue_assessment = db.Column(db.DateTime)
-    status = db.Column(db.String(20), default='inactive')
-    health_status = db.Column(db.String(20), default='good')
-    
-    sessions = db.relationship('DrivingSession', backref='driver', lazy=True, cascade='all, delete-orphan')
-    health_records = db.relationship('HealthRecord', backref='driver', lazy=True, cascade='all, delete-orphan')
-    
-    def set_password(self, password):
-        self.password_hash = generate_password_hash(password)
-    
-    def check_password(self, password):
-        return check_password_hash(self.password_hash, password)
-
-class DrivingSession(db.Model):
-    """Track each driving session"""
-    id = db.Column(db.Integer, primary_key=True)
-    driver_id = db.Column(db.Integer, db.ForeignKey('driver.id'), nullable=False)
-    start_time = db.Column(db.DateTime, default=datetime.utcnow)
-    end_time = db.Column(db.DateTime)
-    duration_hours = db.Column(db.Float)
-    start_location = db.Column(db.String(200))
-    end_location = db.Column(db.String(200))
-    distance_km = db.Column(db.Float)
-    average_fatigue = db.Column(db.Integer)
-    max_fatigue = db.Column(db.Integer)
-    drowsiness_alerts = db.Column(db.Integer, default=0)
-    breaks_taken = db.Column(db.Integer, default=0)
-    weather_condition = db.Column(db.String(50))
-    road_conditions = db.Column(db.String(50))
-
-class HealthRecord(db.Model):
-    """Driver health assessment records"""
-    id = db.Column(db.Integer, primary_key=True)
-    driver_id = db.Column(db.Integer, db.ForeignKey('driver.id'), nullable=False)
-    timestamp = db.Column(db.DateTime, default=datetime.utcnow)
-    assessment_type = db.Column(db.String(50))
-    fatigue_level = db.Column(db.Integer)
-    eye_closure_percentage = db.Column(db.Float)
-    blink_frequency = db.Column(db.Float)
-    head_position = db.Column(db.String(50))
-    yawn_detected = db.Column(db.Boolean, default=False)
-    hours_driven = db.Column(db.Float)
-    sleep_hours = db.Column(db.Float)
-    tiredness_level = db.Column(db.Integer)
-    recommendation = db.Column(db.String(500))
-    alert_sent = db.Column(db.Boolean, default=False)
 
 # ============================================================================
 # UTILITY FUNCTIONS
@@ -709,19 +645,9 @@ def internal_error(error):
     return jsonify({'success': False, 'message': 'Internal server error'}), 500
 
 # ============================================================================
-# DATABASE INITIALIZATION
-# ============================================================================
-
-def init_db():
-    """Initialize database"""
-    with app.app_context():
-        db.create_all()
-        print("✅ Database initialized")
-
-# ============================================================================
 # MAIN
 # ============================================================================
 
 if __name__ == '__main__':
-    init_db()
+    init_db(app)
     app.run(debug=True, host='0.0.0.0', port=5000)
