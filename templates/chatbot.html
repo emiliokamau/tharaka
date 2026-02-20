@@ -379,6 +379,16 @@
                 opacity: 1;
             }
         }
+
+        .btn.listening {
+            animation: pulse 1s infinite;
+            background: linear-gradient(135deg, #ffa502 0%, #ff6348 100%) !important;
+        }
+
+        @keyframes pulse {
+            0%, 100% { transform: scale(1); }
+            50% { transform: scale(1.1); }
+        }
     </style>
 </head>
 <body>
@@ -421,7 +431,7 @@
                     autocomplete="off"
                 >
                 <button class="btn" onclick="sendMessage()">📤 Send</button>
-                <button class="btn" onclick="startVoiceChat()" style="background: linear-gradient(135deg, #ff6b6b 0%, #ff8787 100%);">🎤 Voice</button>
+                <button class="btn" id="voiceBtn" onclick="toggleVoiceChat()" style="background: linear-gradient(135deg, #ff6b6b 0%, #ff8787 100%);">🎤 Voice</button>
             </div>
         </div>
 
@@ -473,7 +483,7 @@
     </div>
 
     <script>
-        const API_URL = 'http://localhost:5000/api';
+        const API_URL = 'https://tharaka.onrender.com/api';
         let conversationHistory = [];
         let isListening = false;
 
@@ -521,6 +531,8 @@
                 if (result.success) {
                     const reply = result.response;
                     addMessageToChat(reply, 'assistant');
+                    // Speak the response
+                    speakText(reply);
                     conversationHistory.push({ role: 'user', content: message });
                     conversationHistory.push({ role: 'assistant', content: reply });
                 } else {
@@ -591,22 +603,43 @@
             }
         }
 
-        // Voice chat
-        async function startVoiceChat() {
+        // Voice chat - Enhanced with TTS
+        let recognition = null;
+        let isListening = false;
+        let synth = window.speechSynthesis;
+        let autoSpeak = true;
+
+        function initSpeechRecognition() {
             if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
-                alert('Speech recognition not supported in your browser');
+                return null;
+            }
+            const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+            return new SpeechRecognition();
+        }
+
+        function toggleVoiceChat() {
+            if (!recognition) {
+                recognition = initSpeechRecognition();
+                if (!recognition) {
+                    alert('Speech recognition not supported in your browser. Please use Chrome or Edge.');
+                    return;
+                }
+            }
+
+            if (isListening) {
+                recognition.stop();
                 return;
             }
 
-            const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-            const recognition = new SpeechRecognition();
-
             recognition.lang = 'en-US';
-            recognition.start();
+            recognition.continuous = false;
+            recognition.interimResults = true;
 
             recognition.onstart = () => {
                 isListening = true;
-                addMessageToChat('🎤 Listening...', 'assistant');
+                document.getElementById('voiceBtn').classList.add('listening');
+                document.getElementById('voiceBtn').innerHTML = '⏹️ Stop';
+                addMessageToChat('🎤 Listening... Say your question', 'assistant');
             };
 
             recognition.onresult = (event) => {
@@ -615,18 +648,58 @@
                     transcript += event.results[i][0].transcript;
                 }
 
-                removeLoadingState();
-                document.getElementById('messageInput').value = transcript;
+                if (event.results[0].isFinal) {
+                    document.getElementById('messageInput').value = transcript;
+                    // Auto-send the message
+                    sendMessage();
+                }
             };
 
             recognition.onerror = (event) => {
-                addMessageToChat('🎤 Error: ' + event.error, 'assistant');
-                isListening = false;
+                console.error('Speech recognition error:', event.error);
+                addMessageToChat('🎤 Error: ' + event.error + '. Please try again.', 'assistant');
+                stopListening();
             };
 
             recognition.onend = () => {
-                isListening = false;
+                stopListening();
             };
+
+            try {
+                recognition.start();
+            } catch (e) {
+                console.error('Error starting recognition:', e);
+            }
+        }
+
+        function stopListening() {
+            isListening = false;
+            document.getElementById('voiceBtn').classList.remove('listening');
+            document.getElementById('voiceBtn').innerHTML = '🎤 Voice';
+        }
+
+        // Text-to-Speech function
+        function speakText(text) {
+            if (!synth || !autoSpeak) return;
+            
+            // Cancel any ongoing speech
+            synth.cancel();
+            
+            // Clean HTML tags for speech
+            const cleanText = text.replace(/<[^>]*>/g, '').replace(/&nbsp;/g, ' ');
+            
+            const utterance = new SpeechSynthesisUtterance(cleanText);
+            utterance.lang = 'en-US';
+            utterance.rate = 1.0;
+            utterance.pitch = 1.0;
+            utterance.volume = 1.0;
+            
+            synth.speak(utterance);
+        }
+
+        // Test voice
+        function testVoice() {
+            speakText('Hello! This is a test of the voice system. The assistant will speak responses after you ask questions.');
         }
 
         // Load statistics
