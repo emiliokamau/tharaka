@@ -46,21 +46,21 @@ predictor = AccidentPredictor()
 
 print("""
     ╔══════════════════════════════════════════════════════════════════════╗
-    ║  🚗 Kenya Road Safety - Unified Driver Monitoring Platform          ║
+    ║  KENYA ROAD SAFETY - Unified Driver Monitoring Platform             ║
     ║  Version 2.0 - Dashboard + Chatbot + Health System                  ║
     ║  Starting on http://localhost:5000                                   ║
     ║  All features in one place!                                          ║
     ╚══════════════════════════════════════════════════════════════════════╝
     
     Features:
-      ✅ Driver Registration & Login
-      ✅ Real-time Drowsiness Monitoring
-      ✅ AI Safety Chatbot
-      ✅ Health Records Tracking
-      ✅ Driving Session Management
-      ✅ Safety Analytics
-      ✅ Black Spot Warnings
-      ✅ Risk Prediction
+      [OK] Driver Registration & Login
+      [OK] Real-time Drowsiness Monitoring
+      [OK] AI Safety Chatbot
+      [OK] Health Records Tracking
+      [OK] Driving Session Management
+      [OK] Safety Analytics
+      [OK] Black Spot Warnings
+      [OK] Risk Prediction
     
     Navigate: Register → Login → Dashboard → Features
     Database: SQLite (drivers.db)
@@ -356,10 +356,10 @@ def assess_drowsiness(driver_id):
         recommendation = '⚠️ WARNING: Take a break soon'
     elif fatigue_score >= 30:
         alert_level = 'info'
-        recommendation = '✅ You appear alert. Continue safe driving'
+        recommendation = '[OK] You appear alert. Continue safe driving'
     else:
         alert_level = 'safe'
-        recommendation = '✅ Great! You are alert. Keep up good driving'
+        recommendation = '[OK] Great! You are alert. Keep up good driving'
     
     # Save to database
     driver = Driver.query.get(driver_id)

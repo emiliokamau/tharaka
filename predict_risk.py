@@ -32,7 +32,7 @@ class AccidentPredictor:
         scaler_file = os.path.join(MODEL_DIR, f"{self.model_name}_scaler.pkl")
         
         if not os.path.exists(model_file):
-            print(f"❌ Model file not found: {model_file}")
+            print(f"[ERROR] Model file not found: {model_file}")
             print("Please train a model first: python train_model.py")
             return False
         
@@ -43,10 +43,10 @@ class AccidentPredictor:
             with open(scaler_file, 'rb') as f:
                 self.scaler = pickle.load(f)
             
-            print(f"✅ Loaded {self.model_name} model")
+            print(f"[OK] Loaded {self.model_name} model")
             return True
         except Exception as e:
-            print(f"❌ Failed to load model: {e}")
+            print(f"[ERROR] Failed to load model: {e}")
             return False
     
     def predict_risk(self, accident_count, regions, cause_factors, black_spots):
