@@ -433,6 +433,10 @@
                 <button class="btn" onclick="sendMessage()">📤 Send</button>
                 <button class="btn" id="voiceBtn" onclick="toggleVoiceChat()" style="background: linear-gradient(135deg, #ff6b6b 0%, #ff8787 100%);">🎤 Voice</button>
             </div>
+            <div class="chat-footer" style="border-top: none; padding-top: 0;">
+                <button class="btn" onclick="testVoice()" style="background: #f5f5f5; color: #333; border: 2px solid #e0e0e0;">🔊 Test Voice</button>
+                <button class="btn" onclick="toggleAutoSpeak()" id="autoSpeakBtn" style="background: #f5f5f5; color: #333; border: 2px solid #e0e0e0;">🗣️ Auto Speak: On</button>
+            </div>
         </div>
 
         <!-- Info Section -->
@@ -483,9 +487,10 @@
     </div>
 
     <script>
-        const API_URL = 'https://tharaka.onrender.com/api';
+        const DEFAULT_API_BASE = window.location.origin;
+        const API_BASE = (window.API_BASE_URL || DEFAULT_API_BASE).replace(/\/$/, '');
+        const API_URL = `${API_BASE}/api`;
         let conversationHistory = [];
-        let isListening = false;
 
         // Get token from localStorage or cookies
         function getToken() {
@@ -513,7 +518,7 @@
             showLoadingState();
 
             try {
-                const response = await fetch('/api/chatbot/chat', {
+                const response = await fetch(`${API_URL}/chatbot/chat`, {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
@@ -526,7 +531,14 @@
                         }
                     })
                 });
-
+                removeLoadingState();
+                if (!response.ok) {
+                    if (response.status === 401) {
+                        addMessageToChat('Session expired. Please log in again.', 'assistant');
+                        setTimeout(() => { window.location.href = '/login'; }, 1000);
+                        return;
+                    }
+                }
                 const result = await response.json();
                 if (result.success) {
                     const reply = result.response;
@@ -540,6 +552,7 @@
                 }
             } catch (err) {
                 console.error('Error:', err);
+                removeLoadingState();
                 addMessageToChat('Connection error. Please check your internet and try again.', 'assistant');
             }
         }
@@ -702,10 +715,25 @@
             speakText('Hello! This is a test of the voice system. The assistant will speak responses after you ask questions.');
         }
 
+        function toggleAutoSpeak() {
+            autoSpeak = !autoSpeak;
+            const btn = document.getElementById('autoSpeakBtn');
+            if (autoSpeak) {
+                btn.textContent = '🗣️ Auto Speak: On';
+                btn.style.background = '#f5f5f5';
+                btn.style.color = '#333';
+            } else {
+                btn.textContent = '🔇 Auto Speak: Off';
+                btn.style.background = '#ffe0e0';
+                btn.style.color = '#a33';
+                if (synth) synth.cancel();
+            }
+        }
+
         // Load statistics
         async function loadStatistics() {
             try {
-                const response = await fetch('/api/driver/statistics', {
+                const response = await fetch(`${API_URL}/driver/statistics`, {
                     headers: { 'Authorization': `Bearer ${getToken()}` }
                 });
 
