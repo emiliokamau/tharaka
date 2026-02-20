@@ -647,6 +647,212 @@ def predict_route_risk(driver_id):
     }), 200
 
 # ============================================================================
+# FRONTEND ROUTES - Voice Communication
+# ============================================================================
+
+@app.route('/voice')
+def voice_communication():
+    """Driver Voice Communication page"""
+    token = request.cookies.get('token')
+    if not token:
+        return redirect(url_for('login'))
+    
+    try:
+        data = jwt.decode(token, app.config['JWT_SECRET_KEY'], algorithms=['HS256'])
+        driver = Driver.query.get(data['driver_id'])
+        if not driver:
+            return redirect(url_for('login'))
+    except:
+        return redirect(url_for('login'))
+    
+    return render_template('voice_driver.html', driver=driver)
+
+# ============================================================================
+# API ENDPOINTS - Voice Communication
+# ============================================================================
+
+@app.route('/api/voice/command', methods=['POST'])
+@token_required
+def voice_command(driver_id):
+    """Process voice command from driver"""
+    data = request.get_json()
+    command = data.get('command', '').lower()
+    
+    driver = Driver.query.get(driver_id)
+    
+    # Get current session
+    current_session = DrivingSession.query.filter_by(
+        driver_id=driver_id,
+        end_time=None
+    ).first()
+    
+    # Process commands
+    response = ''
+    action = None
+    session_id = None
+    
+    # Fatigue level query
+    if 'fatigue' in command or 'tired' in command or 'sleepy' in command:
+        fatigue = driver.fatigue_level or 0
+        if fatigue >= 70:
+            response = f'Your fatigue level is {fatigue} percent. This is high! Please take a break immediately for your safety.'
+        elif fatigue >= 40:
+            response = f'Your fatigue level is {fatigue} percent. You should stay alert and consider taking a break soon.'
+        else:
+            response = f'Your fatigue level is {fatigue} percent. You are doing well! Keep up safe driving.'
+    
+    # Weather query
+    elif 'weather' in command or 'rain' in command:
+        response = 'Current weather conditions may vary. Drive carefully in rain and reduce speed. Check local weather updates for your area.'
+    
+    # Black spots
+    elif 'black spot' in command or 'dangerous' in command or 'accident' in command:
+        response = 'There are several high-risk areas on Kenyan roads. Stay alert, especially on Nairobi-Mombasa Road, Thika Road, and Mombasa Road Junction. Would you like me to check black spots near your location?'
+    
+    # Start session
+    elif 'start' in command and ('session' in command or 'trip' in command or 'drive' in command):
+        if current_session:
+            response = 'You already have an active driving session. Say "end session" to finish it.'
+        else:
+            session = DrivingSession(
+                driver_id=driver_id,
+                start_location='Unknown',
+                weather_condition='Unknown',
+                road_conditions='Normal'
+            )
+            db.session.add(session)
+            db.session.commit()
+            
+            driver.status = 'on_trip'
+            db.session.commit()
+            
+            session_id = session.id
+            action = 'start_session'
+            response = 'Driving session started! Remember to drive safely. I will monitor your fatigue levels throughout your trip.'
+    
+    # End session
+    elif 'end' in command and ('session' in command or 'trip' in command):
+        if not current_session:
+            response = 'You have no active driving session to end.'
+        else:
+            current_session.end_time = datetime.utcnow()
+            duration = (current_session.end_time - current_session.start_time).total_seconds() / 3600
+            current_session.duration_hours = round(duration, 2)
+            
+            driver.status = 'inactive'
+            driver.total_driving_hours += current_session.duration_hours
+            
+            db.session.commit()
+            
+            response = f'Driving session ended. You drove for {round(duration, 1)} hours. Stay safe!'
+            action = 'end_session'
+    
+    # Driving time
+    elif 'how long' in command or 'driving time' in command or 'hours driven' in command:
+        if current_session:
+            duration = (datetime.utcnow() - current_session.start_time).total_seconds() / 3600
+            response = f'You have been driving for {round(duration, 1)} hours in your current session.'
+        else:
+            response = f'You have driven for a total of {round(driver.total_driving_hours, 1)} hours overall.'
+    
+    # Safety tips
+    elif 'safety' in command or 'tip' in command or 'advice' in command:
+        tips = [
+            'Always wear your seatbelt, even for short trips.',
+            'Take a 15-minute break every 2 hours of driving.',
+            'Never drive if you feel sleepy - pull over and rest.',
+            'Maintain safe following distance from other vehicles.',
+            'Check mirrors frequently to stay aware of surroundings.'
+        ]
+        import random
+        tip = random.choice(tips)
+        response = f'Here is a safety tip: {tip}'
+    
+    # Emergency
+    elif 'emergency' in command or 'help' in command or 'save me' in command:
+        response = 'Initiating emergency protocol. Your emergency contacts will be notified.'
+        action = 'emergency'
+    
+    # Music
+    elif 'music' in command or 'play' in command:
+        response = 'I cannot play music directly, but you can use your phone or car stereo. Stay focused on the road!'
+    
+    # Greetings
+    elif 'hello' in command or 'hi' in command or 'hey' in command:
+        response = f'Hello {driver.full_name}! I am your driving assistant. Ask me about your fatigue level, weather, black spots, or say "start session" to begin driving.'
+    
+    # Thank you
+    elif 'thank' in command:
+        response = 'You are welcome! Stay safe on the road!'
+    
+    # Don't understand
+    else:
+        response = 'I did not understand that. Try asking about your fatigue level, weather, black spots, or say "help" for more options.'
+    
+    return jsonify({
+        'success': True,
+        'response': response,
+        'action': action,
+        'session_id': session_id
+    }), 200
+
+@app.route('/api/voice/emergency', methods=['POST'])
+@token_required
+def voice_emergency(driver_id):
+    """Handle emergency voice command"""
+    driver = Driver.query.get(driver_id)
+    
+    # Get current session info
+    current_session = DrivingSession.query.filter_by(
+        driver_id=driver_id,
+        end_time=None
+    ).first()
+    
+    # Log emergency
+    record = HealthRecord(
+        driver_id=driver_id,
+        assessment_type='emergency',
+        fatigue_level=driver.fatigue_level or 0,
+        recommendation='EMERGENCY: Driver requested emergency assistance',
+        alert_sent=True
+    )
+    
+    db.session.add(record)
+    db.session.commit()
+    
+    return jsonify({
+        'success': True,
+        'message': 'Emergency protocol activated',
+        'driver_name': driver.full_name,
+        'location': 'Unknown - enable location for precise coordinates'
+    }), 200
+
+@app.route('/api/voice/status', methods=['GET'])
+@token_required
+def voice_status(driver_id):
+    """Get current driver status for voice system"""
+    driver = Driver.query.get(driver_id)
+    
+    current_session = DrivingSession.query.filter_by(
+        driver_id=driver_id,
+        end_time=None
+    ).first()
+    
+    return jsonify({
+        'success': True,
+        'status': {
+            'driver_name': driver.full_name,
+            'fatigue_level': driver.fatigue_level or 0,
+            'health_status': driver.health_status,
+            'total_driving_hours': driver.total_driving_hours,
+            'current_session': {
+                'id': current_session.id,
+                'start_time': current_session.start_time.isoformat() if current_session else None
+            } if current_session else None
+        }
+    }), 200
+
+# ============================================================================
 # ERROR HANDLERS
 # ============================================================================
 
