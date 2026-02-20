@@ -1,0 +1,13 @@
+# Add these to .gitignore to keep sensitive data and cache out of version control
+.env
+*.pyc
+__pycache__/
+.vscode/
+.idea/
+scraped_data/
+*.json
+!.env.example
+venv/
+.venv/
+.dist/
+*.log

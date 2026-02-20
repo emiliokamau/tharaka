@@ -1,0 +1,11 @@
+======================================================================
+ROAD ACCIDENT MODEL EVALUATION REPORT
+======================================================================
+
+Model Type: Gradient Boosting
+Training Date: 2026-02-20T03:03:17.818887
+Data Source: Kenya Road Accident PDFs
+
+PERFORMANCE METRICS
+----------------------------------------------------------------------
+Test Set Size: 3
