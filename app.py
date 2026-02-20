@@ -35,10 +35,25 @@ app = Flask(__name__)
 CORS(app)
 
 # Configuration
-app.config['SECRET_KEY'] = 'kenya-road-safety-2024-secure-key'
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///drivers.db'
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
+
+# Use PostgreSQL in production (Render), SQLite locally
+DATABASE_URL = os.getenv('DATABASE_URL')
+if DATABASE_URL:
+    # Render provides postgres:// or postgresql:// prefix
+    # Convert to psycopg2 format if needed
+    if DATABASE_URL.startswith('postgres://'):
+        DATABASE_URL = DATABASE_URL.replace('postgres://', 'postgresql://', 1)
+    app.config['SQLALCHEMY_DATABASE_URI'] = DATABASE_URL
+else:
+    app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///drivers.db'
+
+app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'kenya-road-safety-2024-secure-key')
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-app.config['JWT_SECRET_KEY'] = 'jwt-secret-key-2024'
+app.config['JWT_SECRET_KEY'] = os.getenv('JWT_SECRET_KEY', 'jwt-secret-key-2024')
 
 # Initialize database with app
 db.init_app(app)
