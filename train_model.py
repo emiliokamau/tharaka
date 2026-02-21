@@ -1,401 +1,383 @@
 """
-Train ML model on extracted road accident data from Kenya PDFs
-Predicts accident probability based on temporal, geographic, and contextual factors
+Facial Fatigue Detection Model Training Script
+==============================================
+Trains a CNN model on Kaggle fatigue dataset to predict driver fatigue levels (0-100 scale)
+Dataset: https://www.kaggle.com/datasets/rihabkaci99/fatigue-dataset
 """
+
 import os
-import json
 import numpy as np
 import pandas as pd
-from datetime import datetime
-from pathlib import Path
-from dotenv import load_dotenv
-import warnings
-warnings.filterwarnings('ignore')
-
-# ML Libraries
+import cv2
+import tensorflow as tf
+from tensorflow import keras
+from tensorflow.keras import layers, models
+from tensorflow.keras.preprocessing.image import ImageDataGenerator
 from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import StandardScaler, LabelEncoder
-from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
-from sklearn.metrics import classification_report, confusion_matrix, roc_auc_score, roc_curve
 import pickle
-
-# Load environment
-load_dotenv()
+import kagglehub
+import json
+from pathlib import Path
 
 # Configuration
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-EXTRACTED_DATA_DIR = "extracted_data"
+DATASET_NAME = "rihabkaci99/fatigue-dataset"
 MODEL_DIR = "models"
-REPORTS_DIR = "model_reports"
+MODEL_PATH = os.path.join(MODEL_DIR, "fatigue_detection_model.h5")
+SCALER_PATH = os.path.join(MODEL_DIR, "fatigue_scaler.pkl")
+CONFIG_PATH = os.path.join(MODEL_DIR, "model_config.json")
+IMAGE_SIZE = (128, 128)
+BATCH_SIZE = 32
+EPOCHS = 30
+VALIDATION_SPLIT = 0.2
+TEST_SPLIT = 0.1
 
-# Create directories
-os.makedirs(MODEL_DIR, exist_ok=True)
-os.makedirs(REPORTS_DIR, exist_ok=True)
+def create_model_directory():
+    """Create models directory if it doesn't exist"""
+    if not os.path.exists(MODEL_DIR):
+        os.makedirs(MODEL_DIR)
+        print(f"✅ Created {MODEL_DIR} directory")
 
+def download_dataset():
+    """Download Kaggle fatigue dataset"""
+    print("\n" + "="*70)
+    print("DOWNLOADING KAGGLE FATIGUE DATASET")
+    print("="*70)
+    
+    try:
+        path = kagglehub.dataset_download(DATASET_NAME)
+        print(f"✅ Dataset downloaded to: {path}")
+        return path
+    except Exception as e:
+        print(f"❌ Error downloading dataset: {e}")
+        print("Make sure you have:")
+        print("  1. Kaggle API key configured (~/.kaggle/kaggle.json)")
+        print("  2. Dataset access permission on Kaggle")
+        return None
 
-class RoadAccidentModelTrainer:
-    """Train ML models on Kenya road accident data"""
+def load_and_preprocess_images(dataset_path, max_samples=None):
+    """
+    Load images and labels from dataset
+    Expected structure: dataset/
+        ├── fatigue/ (images labeled as fatigued)
+        └── non_fatigue/ (images labeled as not fatigued)
+    """
+    print("\n" + "="*70)
+    print("LOADING AND PREPROCESSING IMAGES")
+    print("="*70)
     
-    def __init__(self):
-        """Initialize the trainer"""
-        self.data = None
-        self.df = None
-        self.features = None
-        self.target = None
-        self.scaler = StandardScaler()
-        self.label_encoders = {}
-        self.model = None
-        self.model_name = None
-        
-    def load_extracted_data(self):
-        """Load all extracted JSON data from PDF extractions"""
-        print("\n" + "="*70)
-        print("📂 LOADING EXTRACTED DATA")
-        print("="*70)
-        
-        json_files = list(Path(EXTRACTED_DATA_DIR).glob("*.json"))
-        
-        if not json_files:
-            print(f"❌ No extracted JSON files found in {EXTRACTED_DATA_DIR}/")
-            print("Please run pdf_extractor.py first to extract data from PDFs")
-            return False
-        
-        print(f"✅ Found {len(json_files)} extracted data file(s):")
-        
-        self.data = {}
-        for json_file in json_files:
-            print(f"   • {json_file.name}")
-            with open(json_file, 'r', encoding='utf-8') as f:
-                self.data[json_file.stem] = json.load(f)
-        
-        return True
+    images = []
+    labels = []  # 0 = not fatigued, 1 = fatigued
     
-    def preprocess_data(self):
-        """Convert extracted data to ML-ready format"""
-        print("\n" + "="*70)
-        print("🔄 DATA PREPROCESSING")
-        print("="*70)
-        
-        records = []
-        
-        for source_name, data in self.data.items():
-            print(f"\nProcessing: {source_name}")
-            
-            # Extract accident statistics
-            stats = data.get('accident_statistics', {})
-            
-            if isinstance(stats, dict):
-                # Stats are aggregated by year/location
-                for period, count in stats.items():
-                    if isinstance(count, (int, float)) and count > 0:
-                        record = {
-                            'source': source_name,
-                            'period': str(period),
-                            'accident_count': int(count) if isinstance(count, (int, float)) else 0,
-                            'high_risk': 0  # Will be set based on thresholds
-                        }
-                        
-                        # Add geographic data if available
-                        geo_data = data.get('geographic_distribution', {})
-                        if isinstance(geo_data, dict):
-                            record['regions'] = len(geo_data) if geo_data else 0
-                        
-                        # Add cause information
-                        causes = data.get('causes', [])
-                        record['cause_factors'] = len(causes) if isinstance(causes, list) else 1
-                        
-                        # Add black spots
-                        black_spots = data.get('black_spots', [])
-                        record['black_spots_identified'] = len(black_spots) if isinstance(black_spots, list) else 0
-                        
-                        records.append(record)
-            
-            elif isinstance(stats, list):
-                # Stats are in list format
-                for stat in stats:
-                    if isinstance(stat, dict):
-                        record = {
-                            'source': source_name,
-                            'period': stat.get('period', 'unknown'),
-                            'accident_count': int(stat.get('count', 0)) if stat.get('count') else 0,
-                            'high_risk': 0
-                        }
-                        
-                        geo_data = data.get('geographic_distribution', {})
-                        record['regions'] = len(geo_data) if isinstance(geo_data, dict) else 0
-                        
-                        causes = data.get('causes', [])
-                        record['cause_factors'] = len(causes) if isinstance(causes, list) else 1
-                        
-                        black_spots = data.get('black_spots', [])
-                        record['black_spots_identified'] = len(black_spots) if isinstance(black_spots, list) else 0
-                        
-                        records.append(record)
-        
-        if not records:
-            print("❌ No accident data found in extracted files")
-            return False
-        
-        # Create DataFrame
-        self.df = pd.DataFrame(records)
-        
-        # Define high-risk areas (top quartile of accidents)
-        if len(self.df) > 0:
-            threshold = self.df['accident_count'].quantile(0.75)
-            self.df['high_risk'] = (self.df['accident_count'] > threshold).astype(int)
-        
-        print(f"\n✅ Created dataset with {len(self.df)} records")
-        print(f"\n📊 Dataset shape: {self.df.shape}")
-        print(f"   High-risk areas: {self.df['high_risk'].sum()}")
-        print(f"   Safe areas: {(1-self.df['high_risk']).sum()}")
-        
-        return True
+    # Check for common directory structures
+    possible_paths = [
+        (os.path.join(dataset_path, "fatigue"), 1),
+        (os.path.join(dataset_path, "Fatigue"), 1),
+        (os.path.join(dataset_path, "FATIGUE"), 1),
+        (os.path.join(dataset_path, "non_fatigue"), 0),
+        (os.path.join(dataset_path, "NonFatigue"), 0),
+        (os.path.join(dataset_path, "NON_FATIGUE"), 0),
+    ]
     
-    def train_random_forest(self):
-        """Train Random Forest model"""
-        print("\n" + "="*70)
-        print("🌲 TRAINING RANDOM FOREST MODEL")
-        print("="*70)
-        
-        # Prepare features and target
-        feature_cols = ['accident_count', 'regions', 'cause_factors', 'black_spots_identified']
-        X = self.df[feature_cols].fillna(0)
-        y = self.df['high_risk']
-        
-        # Scale features
-        X_scaled = self.scaler.fit_transform(X)
-        
-        # Split data
-        X_train, X_test, y_train, y_test = train_test_split(
-            X_scaled, y, test_size=0.2, random_state=42, stratify=y
-        )
-        
-        print(f"\n📊 Training set: {len(X_train)} samples")
-        print(f"   Test set: {len(X_test)} samples")
-        
-        # Train model
-        print("\n🤖 Training Random Forest...")
-        self.model = RandomForestClassifier(
-            n_estimators=100,
-            max_depth=10,
-            min_samples_split=5,
-            min_samples_leaf=2,
-            random_state=42,
-            n_jobs=-1
-        )
-        
-        self.model.fit(X_train, y_train)
-        self.model_name = "random_forest"
-        
-        # Evaluate
-        y_pred = self.model.predict(X_test)
-        y_pred_proba = self.model.predict_proba(X_test)[:, 1]
-        
-        accuracy = self.model.score(X_test, y_test)
-        roc_auc = roc_auc_score(y_test, y_pred_proba)
-        
-        print(f"\n✅ Model trained successfully!")
-        print(f"   Accuracy: {accuracy:.2%}")
-        print(f"   ROC-AUC: {roc_auc:.2%}")
-        
-        # Feature importance
-        feature_importance = pd.DataFrame({
-            'feature': feature_cols,
-            'importance': self.model.feature_importances_
-        }).sort_values('importance', ascending=False)
-        
-        print(f"\n🎯 Feature Importance:")
-        for idx, row in feature_importance.iterrows():
-            print(f"   {row['feature']}: {row['importance']:.2%}")
-        
-        return y_test, y_pred, y_pred_proba, feature_importance
+    fatigue_dir = None
+    non_fatigue_dir = None
     
-    def train_gradient_boosting(self):
-        """Train Gradient Boosting model"""
-        print("\n" + "="*70)
-        print("📈 TRAINING GRADIENT BOOSTING MODEL")
-        print("="*70)
-        
-        # Prepare features and target
-        feature_cols = ['accident_count', 'regions', 'cause_factors', 'black_spots_identified']
-        X = self.df[feature_cols].fillna(0)
-        y = self.df['high_risk']
-        
-        # Scale features
-        X_scaled = self.scaler.fit_transform(X)
-        
-        # Split data
-        X_train, X_test, y_train, y_test = train_test_split(
-            X_scaled, y, test_size=0.2, random_state=42, stratify=y
-        )
-        
-        print(f"\n📊 Training set: {len(X_train)} samples")
-        print(f"   Test set: {len(X_test)} samples")
-        
-        # Train model
-        print("\n🤖 Training Gradient Boosting...")
-        self.model = GradientBoostingClassifier(
-            n_estimators=100,
-            learning_rate=0.1,
-            max_depth=5,
-            random_state=42
-        )
-        
-        self.model.fit(X_train, y_train)
-        self.model_name = "gradient_boosting"
-        
-        # Evaluate
-        y_pred = self.model.predict(X_test)
-        y_pred_proba = self.model.predict_proba(X_test)[:, 1]
-        
-        accuracy = self.model.score(X_test, y_test)
-        roc_auc = roc_auc_score(y_test, y_pred_proba)
-        
-        print(f"\n✅ Model trained successfully!")
-        print(f"   Accuracy: {accuracy:.2%}")
-        print(f"   ROC-AUC: {roc_auc:.2%}")
-        
-        # Feature importance
-        feature_importance = pd.DataFrame({
-            'feature': feature_cols,
-            'importance': self.model.feature_importances_
-        }).sort_values('importance', ascending=False)
-        
-        print(f"\n🎯 Feature Importance:")
-        for idx, row in feature_importance.iterrows():
-            print(f"   {row['feature']}: {row['importance']:.2%}")
-        
-        return y_test, y_pred, y_pred_proba, feature_importance
+    for path, label in possible_paths:
+        if os.path.exists(path):
+            if label == 1:
+                fatigue_dir = path
+                print(f"✅ Found fatigue images at: {path}")
+            else:
+                non_fatigue_dir = path
+                print(f"✅ Found non-fatigue images at: {path}")
     
-    def save_model(self):
-        """Save trained model"""
-        if self.model is None:
-            print("❌ No model to save")
-            return False
-        
-        model_file = os.path.join(MODEL_DIR, f"{self.model_name}_model.pkl")
-        scaler_file = os.path.join(MODEL_DIR, f"{self.model_name}_scaler.pkl")
-        
-        with open(model_file, 'wb') as f:
-            pickle.dump(self.model, f)
-        
-        with open(scaler_file, 'wb') as f:
-            pickle.dump(self.scaler, f)
-        
-        print(f"\n💾 Model saved: {model_file}")
-        print(f"💾 Scaler saved: {scaler_file}")
-        
-        return True
+    # If standard structure not found, check raw dataset structure
+    if not fatigue_dir or not non_fatigue_dir:
+        print("⚠️  Standard directory structure not found. Listing dataset contents:")
+        for root, dirs, files in os.walk(dataset_path):
+            level = root.replace(dataset_path, '').count(os.sep)
+            indent = ' ' * 2 * level
+            print(f"{indent}{os.path.basename(root)}/")
+            for file in files[:3]:  # Show first 3 files
+                print(f"{indent}  {file}")
+            if level > 2:  # Don't go too deep
+                break
     
-    def generate_report(self, y_test, y_pred, y_pred_proba, feature_importance):
-        """Generate model evaluation report"""
-        report_file = os.path.join(REPORTS_DIR, f"{self.model_name}_report.txt")
+    # Load fatigue images
+    if fatigue_dir:
+        count = 0
+        for filename in os.listdir(fatigue_dir):
+            if max_samples and count >= max_samples:
+                break
+            if filename.lower().endswith(('.png', '.jpg', '.jpeg')):
+                try:
+                    img_path = os.path.join(fatigue_dir, filename)
+                    img = cv2.imread(img_path)
+                    if img is not None:
+                        img = cv2.resize(img, IMAGE_SIZE)
+                        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+                        images.append(img)
+                        labels.append(1)  # Fatigued = 1
+                        count += 1
+                except Exception as e:
+                    print(f"Error loading {filename}: {e}")
         
-        try:
-            with open(report_file, 'w') as f:
-                f.write("="*70 + "\n")
-                f.write("ROAD ACCIDENT MODEL EVALUATION REPORT\n")
-                f.write("="*70 + "\n\n")
-                
-                f.write(f"Model Type: {self.model_name.replace('_', ' ').title()}\n")
-                f.write(f"Training Date: {datetime.now().isoformat()}\n")
-                f.write(f"Data Source: Kenya Road Accident PDFs\n\n")
-                
-                f.write("PERFORMANCE METRICS\n")
-                f.write("-"*70 + "\n")
-                f.write(f"Test Set Size: {len(y_test)}\n")
-                f.write(f"Accuracy: {self.model.score(np.array(y_test).reshape(-1, 1) if len(np.array(y_test).shape) == 1 else y_test, y_test):.2%}\n")
-                f.write(f"ROC-AUC Score: {roc_auc_score(y_test, y_pred_proba):.2%}\n\n")
-                
-                f.write("CLASSIFICATION REPORT\n")
-                f.write("-"*70 + "\n")
-                f.write(classification_report(y_test, y_pred, 
-                                            target_names=['Safe Area', 'High-Risk Area']) + "\n")
-                
-                f.write("FEATURE IMPORTANCE\n")
-                f.write("-"*70 + "\n")
-                for idx, row in feature_importance.iterrows():
-                    f.write(f"{row['feature']}: {row['importance']:.2%}\n")
-                
-                f.write("\n" + "="*70 + "\n")
-            
-            print(f"\n📄 Report saved: {report_file}")
-        except Exception as e:
-            print(f"⚠️  Could not generate full report: {e}")
+        print(f"✅ Loaded {count} fatigue images")
+    
+    # Load non-fatigue images
+    if non_fatigue_dir:
+        count = 0
+        for filename in os.listdir(non_fatigue_dir):
+            if max_samples and count >= max_samples:
+                break
+            if filename.lower().endswith(('.png', '.jpg', '.jpeg')):
+                try:
+                    img_path = os.path.join(non_fatigue_dir, filename)
+                    img = cv2.imread(img_path)
+                    if img is not None:
+                        img = cv2.resize(img, IMAGE_SIZE)
+                        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+                        images.append(img)
+                        labels.append(0)  # Not fatigued = 0
+                        count += 1
+                except Exception as e:
+                    print(f"Error loading {filename}: {e}")
+        
+        print(f"✅ Loaded {count} non-fatigue images")
+    
+    if not images:
+        print("❌ No images loaded. Check dataset structure.")
+        return None, None
+    
+    # Convert to numpy arrays and normalize
+    images = np.array(images, dtype=np.float32) / 255.0
+    labels = np.array(labels)
+    
+    print(f"📊 Dataset shape: {images.shape}")
+    print(f"📊 Labels distribution: Fatigue={np.sum(labels)}, Non-Fatigue={len(labels)-np.sum(labels)}")
+    
+    return images, labels
 
+def build_cnn_model(input_shape=(128, 128, 3)):
+    """
+    Build CNN model for binary fatigue classification
+    Input: Image (128x128x3)
+    Output: Fatigue probability (0-1, converted to 0-100 scale)
+    """
+    print("\n" + "="*70)
+    print("BUILDING CNN MODEL")
+    print("="*70)
+    
+    model = models.Sequential([
+        # Block 1
+        layers.Conv2D(32, (3, 3), activation='relu', padding='same', input_shape=input_shape),
+        layers.BatchNormalization(),
+        layers.Conv2D(32, (3, 3), activation='relu', padding='same'),
+        layers.BatchNormalization(),
+        layers.MaxPooling2D((2, 2)),
+        layers.Dropout(0.25),
+        
+        # Block 2
+        layers.Conv2D(64, (3, 3), activation='relu', padding='same'),
+        layers.BatchNormalization(),
+        layers.Conv2D(64, (3, 3), activation='relu', padding='same'),
+        layers.BatchNormalization(),
+        layers.MaxPooling2D((2, 2)),
+        layers.Dropout(0.25),
+        
+        # Block 3
+        layers.Conv2D(128, (3, 3), activation='relu', padding='same'),
+        layers.BatchNormalization(),
+        layers.Conv2D(128, (3, 3), activation='relu', padding='same'),
+        layers.BatchNormalization(),
+        layers.MaxPooling2D((2, 2)),
+        layers.Dropout(0.25),
+        
+        # Block 4
+        layers.Conv2D(256, (3, 3), activation='relu', padding='same'),
+        layers.BatchNormalization(),
+        layers.Conv2D(256, (3, 3), activation='relu', padding='same'),
+        layers.BatchNormalization(),
+        layers.MaxPooling2D((2, 2)),
+        layers.Dropout(0.25),
+        
+        # Global average pooling
+        layers.GlobalAveragePooling2D(),
+        
+        # Dense layers
+        layers.Dense(256, activation='relu'),
+        layers.BatchNormalization(),
+        layers.Dropout(0.5),
+        
+        layers.Dense(128, activation='relu'),
+        layers.BatchNormalization(),
+        layers.Dropout(0.5),
+        
+        # Output layer (binary classification)
+        layers.Dense(1, activation='sigmoid')
+    ])
+    
+    model.compile(
+        optimizer=keras.optimizers.Adam(learning_rate=0.001),
+        loss='binary_crossentropy',
+        metrics=['accuracy', keras.metrics.Precision(), keras.metrics.Recall()]
+    )
+    
+    print("✅ Model architecture:")
+    model.summary()
+    
+    return model
+
+def train_model(model, X_train, y_train, X_val, y_val):
+    """Train the CNN model"""
+    print("\n" + "="*70)
+    print("TRAINING MODEL")
+    print("="*70)
+    
+    # Data augmentation for better generalization
+    train_datagen = ImageDataGenerator(
+        rotation_range=20,
+        width_shift_range=0.2,
+        height_shift_range=0.2,
+        horizontal_flip=True,
+        zoom_range=0.2,
+        shear_range=0.2,
+        fill_mode='nearest'
+    )
+    
+    # Callbacks
+    callbacks = [
+        keras.callbacks.EarlyStopping(
+            monitor='val_loss',
+            patience=5,
+            restore_best_weights=True,
+            verbose=1
+        ),
+        keras.callbacks.ReduceLROnPlateau(
+            monitor='val_loss',
+            factor=0.5,
+            patience=3,
+            min_lr=1e-7,
+            verbose=1
+        ),
+        keras.callbacks.ModelCheckpoint(
+            MODEL_PATH,
+            monitor='val_accuracy',
+            save_best_only=True,
+            verbose=1
+        )
+    ]
+    
+    # Train with data augmentation
+    history = model.fit(
+        train_datagen.flow(X_train, y_train, batch_size=BATCH_SIZE),
+        epochs=EPOCHS,
+        validation_data=(X_val, y_val),
+        callbacks=callbacks,
+        verbose=1
+    )
+    
+    print(f"✅ Model training complete!")
+    print(f"   Final train accuracy: {history.history['accuracy'][-1]:.4f}")
+    print(f"   Final val accuracy: {history.history['val_accuracy'][-1]:.4f}")
+    
+    return history
+
+def evaluate_model(model, X_test, y_test):
+    """Evaluate model on test set"""
+    print("\n" + "="*70)
+    print("EVALUATING MODEL")
+    print("="*70)
+    
+    loss, accuracy, precision, recall = model.evaluate(X_test, y_test, verbose=0)
+    
+    print(f"✅ Test Results:")
+    print(f"   Loss: {loss:.4f}")
+    print(f"   Accuracy: {accuracy:.4f}")
+    print(f"   Precision: {precision:.4f}")
+    print(f"   Recall: {recall:.4f}")
+    
+    return {'loss': loss, 'accuracy': accuracy, 'precision': precision, 'recall': recall}
+
+def save_model_config(metrics):
+    """Save model configuration and metrics"""
+    config = {
+        'model_name': 'Facial Fatigue Detection CNN',
+        'input_shape': IMAGE_SIZE + (3,),
+        'output_scale': '0-100 (fatigue percentage)',
+        'training_date': pd.Timestamp.now().isoformat(),
+        'batch_size': BATCH_SIZE,
+        'epochs': EPOCHS,
+        'image_size': IMAGE_SIZE,
+        'test_metrics': metrics,
+        'model_file': MODEL_PATH,
+        'scaler_file': SCALER_PATH
+    }
+    
+    with open(CONFIG_PATH, 'w') as f:
+        json.dump(config, f, indent=2)
+    
+    print(f"✅ Model config saved to {CONFIG_PATH}")
+    print(json.dumps(config, indent=2))
 
 def main():
     """Main training pipeline"""
-    print("\n" + "="*80)
-    print("🚀 KENYA ROAD ACCIDENT MODEL TRAINER")
-    print("="*80)
-    print("\nTrain ML models to predict high-risk accident areas")
-    print("Using data extracted from Kenyan road safety PDFs\n")
+    print("\n" + "🚀 "*35)
+    print("FACIAL FATIGUE DETECTION - MODEL TRAINING PIPELINE")
+    print("🚀 "*35 + "\n")
     
-    # Initialize trainer
-    trainer = RoadAccidentModelTrainer()
+    # Create model directory
+    create_model_directory()
     
-    # Load data
-    if not trainer.load_extracted_data():
-        print("\n❌ Failed to load data. Please extract PDFs first:")
-        print("   python pdf_extractor.py")
+    # Download dataset
+    dataset_path = download_dataset()
+    if not dataset_path:
+        print("❌ Failed to download dataset. Exiting.")
         return
     
-    # Preprocess
-    if not trainer.preprocess_data():
-        print("\n❌ Failed to preprocess data")
+    # Load and preprocess images
+    images, labels = load_and_preprocess_images(dataset_path)
+    if images is None or len(images) == 0:
+        print("❌ Failed to load images. Exiting.")
         return
     
-    # Train models
+    # Split data: 70% train, 10% test, 20% val (from train)
+    X_temp, X_test, y_temp, y_test = train_test_split(
+        images, labels, test_size=TEST_SPLIT, random_state=42, stratify=labels
+    )
+    
+    X_train, X_val, y_train, y_val = train_test_split(
+        X_temp, y_temp, test_size=VALIDATION_SPLIT, random_state=42, stratify=y_temp
+    )
+    
     print("\n" + "="*70)
-    print("🤖 MODEL TRAINING")
+    print("DATA SPLIT")
     print("="*70)
+    print(f"Training set: {X_train.shape[0]} images")
+    print(f"Validation set: {X_val.shape[0]} images")
+    print(f"Test set: {X_test.shape[0]} images")
     
-    models_trained = []
+    # Build model
+    model = build_cnn_model(input_shape=IMAGE_SIZE + (3,))
     
-    # Random Forest
-    print("\n[1/2] Random Forest Model")
-    try:
-        y_test1, y_pred1, y_pred_proba1, imp1 = trainer.train_random_forest()
-        trainer.save_model()
-        trainer.generate_report(y_test1, y_pred1, y_pred_proba1, imp1)
-        models_trained.append("Random Forest")
-    except Exception as e:
-        print(f"❌ Random Forest training failed: {e}")
+    # Train model
+    history = train_model(model, X_train, y_train, X_val, y_val)
     
-    # Gradient Boosting
-    print("\n[2/2] Gradient Boosting Model")
-    try:
-        y_test2, y_pred2, y_pred_proba2, imp2 = trainer.train_gradient_boosting()
-        trainer.save_model()
-        trainer.generate_report(y_test2, y_pred2, y_pred_proba2, imp2)
-        models_trained.append("Gradient Boosting")
-    except Exception as e:
-        print(f"❌ Gradient Boosting training failed: {e}")
+    # Evaluate model
+    metrics = evaluate_model(model, X_test, y_test)
     
-    # Summary
-    print("\n" + "="*80)
-    print("✅ TRAINING COMPLETE")
-    print("="*80)
+    # Save model config
+    save_model_config(metrics)
     
-    if models_trained:
-        print(f"\n✅ Successfully trained {len(models_trained)} model(s):")
-        for model in models_trained:
-            print(f"   • {model}")
-        
-        print(f"\n📁 Models saved to: {MODEL_DIR}/")
-        print(f"📁 Reports saved to: {REPORTS_DIR}/")
-        
-        print("\n📊 Next Steps:")
-        print("   1. Review model reports in model_reports/")
-        print("   2. Use trained models for predictions")
-        print("   3. Fine-tune hyperparameters if needed")
-        print("   4. Deploy best model for real-time accident prediction")
-    else:
-        print("\n❌ No models were successfully trained")
-    
-    print("\n" + "="*80)
-
+    print("\n" + "="*70)
+    print("TRAINING COMPLETE ✅")
+    print("="*70)
+    print(f"Model saved to: {MODEL_PATH}")
+    print(f"Config saved to: {CONFIG_PATH}")
+    print("\nNext steps:")
+    print("1. Review model_config.json for performance metrics")
+    print("2. Run model_inference.py to test predictions")
+    print("3. Update app.py to use the trained model")
+    print("="*70 + "\n")
 
 if __name__ == "__main__":
     main()
