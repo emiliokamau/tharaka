@@ -3,6 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="api-base" content="https://tharaka.onrender.com">
     <title>AI Chatbot - Driver Safety Assistant</title>
     <style>
         * {
@@ -487,7 +488,8 @@
     </div>
 
     <script>
-        const DEFAULT_API_BASE = window.location.origin;
+        const metaApiBase = document.querySelector('meta[name="api-base"]')?.content;
+        const DEFAULT_API_BASE = metaApiBase || window.location.origin;
         const API_BASE = (window.API_BASE_URL || DEFAULT_API_BASE).replace(/\/$/, '');
         const API_URL = `${API_BASE}/api`;
         let conversationHistory = [];
@@ -510,6 +512,12 @@
 
             if (!message) return;
 
+            const token = getToken();
+            if (!token) {
+                addMessageToChat('Please log in to continue.', 'assistant');
+                return;
+            }
+
             // Add user message to chat
             addMessageToChat(message, 'user');
             input.value = '';
@@ -522,7 +530,7 @@
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
-                        'Authorization': `Bearer ${getToken()}`
+                        'Authorization': `Bearer ${token}`
                     },
                     body: JSON.stringify({
                         message: message,
@@ -535,7 +543,6 @@
                 if (!response.ok) {
                     if (response.status === 401) {
                         addMessageToChat('Session expired. Please log in again.', 'assistant');
-                        setTimeout(() => { window.location.href = '/login'; }, 1000);
                         return;
                     }
                 }
@@ -732,9 +739,13 @@
 
         // Load statistics
         async function loadStatistics() {
+            const token = getToken();
+            if (!token) {
+                return;
+            }
             try {
                 const response = await fetch(`${API_URL}/driver/statistics`, {
-                    headers: { 'Authorization': `Bearer ${getToken()}` }
+                    headers: { 'Authorization': `Bearer ${token}` }
                 });
 
                 const result = await response.json();
