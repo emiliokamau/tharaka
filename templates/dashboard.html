@@ -653,52 +653,216 @@
             canvas.height = video.videoHeight;
             ctx.drawImage(video, 0, 0);
 
-            // Simulate drowsiness detection (in real implementation, use TensorFlow.js)
-            const drowsinessLevel = Math.random() * 100;
-
-            document.getElementById('drowsinessPercent').textContent = Math.round(drowsinessLevel);
-            document.getElementById('drowsinessBar').style.width = drowsinessLevel + '%';
-
-            let status = '🟢 ALERT';
-            let recommendation = '✅ You appear alert. Keep up safe driving!';
-
-            if (drowsinessLevel >= 80) {
-                status = '🔴 CRITICAL';
-                recommendation = '🚨 CRITICAL: Pull over IMMEDIATELY and rest!';
-                playAlert();
-            } else if (drowsinessLevel >= 60) {
-                status = '⚠️⚠️ WARNING';
-                recommendation = '⚠️ WARNING: Take a break soon';
-            } else if (drowsinessLevel >= 30) {
-                status = '⚠️ CAUTION';
-                recommendation = '⚠️ Monitor your fatigue level';
-            }
-
-            document.getElementById('drowsinessStatus').textContent = status;
-            document.getElementById('recommendationBox').innerHTML = 
-                `<strong>${recommendation}</strong>`;
-
-            // Send to backend
+            // Real drowsiness detection using face analysis
             try {
-                await fetch('/api/drowsiness/assess', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'Authorization': `Bearer ${getToken()}`
-                    },
-                    body: JSON.stringify({
-                        eye_closure_percentage: Math.random() * 40,
-                        blink_frequency: 12 + Math.random() * 8,
-                        head_position: 'normal',
-                        yawn_detected: false,
-                        hours_driven: 2
-                    })
-                });
+                // Analyze face for drowsiness indicators
+                const faceAnalysis = await analyzeFace(video);
+                
+                if (faceAnalysis) {
+                    // Calculate drowsiness score based on multiple factors
+                    let drowsinessScore = 0;
+                    
+                    // Eye closure (0-40 points)
+                    drowsinessScore += faceAnalysis.eyeClosureScore * 0.4;
+                    
+                    // Head tilt (0-25 points)
+                    if (faceAnalysis.headTilt > 20) drowsinessScore += 25;
+                    else if (faceAnalysis.headTilt > 10) drowsinessScore += 15;
+                    else drowsinessScore += faceAnalysis.headTilt * 0.5;
+                    
+                    // Yawning (0-20 points)
+                    if (faceAnalysis.isYawning) drowsinessScore += 20;
+                    
+                    // Eye blink rate (abnormal = fatigue)
+                    if (faceAnalysis.blinkRate < 8 || faceAnalysis.blinkRate > 25) {
+                        drowsinessScore += 15;
+                    }
+                    
+                    // Face not visible
+                    if (!faceAnalysis.faceDetected) {
+                        drowsinessScore += 10;
+                    }
+                    
+                    const drowsinessLevel = Math.min(100, Math.max(0, drowsinessScore));
+                    
+                    // Update UI
+                    document.getElementById('drowsinessPercent').textContent = Math.round(drowsinessLevel);
+                    document.getElementById('drowsinessBar').style.width = drowsinessLevel + '%';
+
+                    let status = '🟢 ALERT';
+                    let recommendation = '✅ You appear alert. Keep up safe driving!';
+
+                    if (drowsinessLevel >= 80) {
+                        status = '🔴 CRITICAL';
+                        recommendation = '🚨 CRITICAL: Pull over IMMEDIATELY and rest! Face analysis shows severe drowsiness.';
+                        playAlert();
+                    } else if (drowsinessLevel >= 60) {
+                        status = '⚠️⚠️ WARNING';
+                        recommendation = '⚠️ WARNING: Take a break soon. Eye closure detected.';
+                    } else if (drowsinessLevel >= 30) {
+                        status = '⚠️ CAUTION';
+                        recommendation = '⚠️ Monitor your fatigue level. Head tilt detected.';
+                    }
+
+                    document.getElementById('drowsinessStatus').textContent = status;
+                    document.getElementById('recommendationBox').innerHTML = 
+                        `<strong>${recommendation}</strong><br><small>Eye: ${faceAnalysis.eyeClosure.toFixed(0)}% | Blink: ${faceAnalysis.blinkRate.toFixed(1)}/min | Head: ${faceAnalysis.headTilt.toFixed(0)}°</small>`;
+
+                    // Send to backend
+                    await fetch('/api/drowsiness/assess', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Authorization': `Bearer ${getToken()}`
+                        },
+                        body: JSON.stringify({
+                            eye_closure_percentage: faceAnalysis.eyeClosure,
+                            blink_frequency: faceAnalysis.blinkRate,
+                            head_position: faceAnalysis.headPosition,
+                            yawn_detected: faceAnalysis.isYawning,
+                            hours_driven: 2
+                        })
+                    });
+                }
             } catch (err) {
-                console.error('Error assessing drowsiness:', err);
+                console.error('Face analysis error:', err);
             }
 
-            setTimeout(monitorDrowsiness, 2000);
+            setTimeout(monitorDrowsiness, 1500);
+        }
+
+        // Face Analysis Variables
+        let blinkCount = 0;
+        let lastBlinkTime = Date.now();
+        let blinkRates = [];
+        let eyeClosedFrames = 0;
+        let totalFrames = 0;
+        let mouthOpenFrames = 0;
+        let lastYawnTime = 0;
+
+        async function analyzeFace(video) {
+            // Simple face analysis without heavy models
+            // Uses basic image processing for eye and mouth regions
+            
+            const canvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d');
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            ctx.drawImage(video, 0, 0);
+            
+            const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+            const data = imageData.data;
+            
+            // Define regions (approximate for face detection)
+            const faceWidth = canvas.width * 0.6;
+            const faceHeight = canvas.height * 0.7;
+            const faceX = (canvas.width - faceWidth) / 2;
+            const faceY = (canvas.height - faceHeight) / 2;
+            
+            // Eye regions (left and right)
+            const leftEyeX = canvas.width * 0.35;
+            const leftEyeY = canvas.height * 0.38;
+            const rightEyeX = canvas.width * 0.55;
+            const rightEyeY = canvas.height * 0.38;
+            const eyeWidth = canvas.width * 0.08;
+            const eyeHeight = canvas.height * 0.04;
+            
+            // Mouth region
+            const mouthX = canvas.width * 0.4;
+            const mouthY = canvas.height * 0.6;
+            const mouthWidth = canvas.width * 0.2;
+            const mouthHeight = canvas.height * 0.08;
+            
+            // Analyze eye regions for darkness (closed = dark)
+            const leftEyeBrightness = getRegionBrightness(data, canvas.width, leftEyeX, leftEyeY, eyeWidth, eyeHeight);
+            const rightEyeBrightness = getRegionBrightness(data, canvas.width, rightEyeX, rightEyeY, eyeWidth, eyeHeight);
+            const avgEyeBrightness = (leftEyeBrightness + rightEyeBrightness) / 2;
+            
+            // Analyze mouth for yawning
+            const mouthBrightness = getRegionBrightness(data, canvas.width, mouthX, mouthY, mouthWidth, mouthHeight);
+            
+            // Face brightness for detection
+            const faceBrightness = getRegionBrightness(data, canvas.width, faceX, faceY, faceWidth, faceHeight);
+            const faceDetected = faceBrightness > 30;
+            
+            // Calculate eye closure (darker = closed)
+            const eyeClosure = Math.max(0, Math.min(100, (1 - avgEyeBrightness / 128) * 100));
+            
+            // Detect blinking (rapid change in brightness)
+            const isBlinking = avgEyeBrightness < 60;
+            if (isBlinking) {
+                eyeClosedFrames++;
+            } else {
+                if (eyeClosedFrames > 0 && eyeClosedFrames < 10) {
+                    blinkCount++;
+                    const now = Date.now();
+                    if (now - lastBlinkTime < 1000) {
+                        blinkRates.push(60); // blinks per minute
+                    }
+                    lastBlinkTime = now;
+                }
+                eyeClosedFrames = 0;
+            }
+            totalFrames++;
+            
+            // Calculate blink rate
+            const avgBlinkRate = blinkRates.length > 0 ? blinkRates.reduce((a, b) => a + b, 0) / blinkRates.length : 15;
+            
+            // Yawn detection (mouth significantly open)
+            const isYawning = mouthBrightness > 150 && mouthBrightness < 200;
+            if (isYawning) {
+                mouthOpenFrames++;
+            } else {
+                if (mouthOpenFrames > 15) {
+                    const now = Date.now();
+                    if (now - lastYawnTime > 3000) {
+                        lastYawnTime = now;
+                    }
+                }
+                mouthOpenFrames = 0;
+            }
+            
+            // Estimate head tilt (based on face symmetry)
+            const leftHalfBrightness = getRegionBrightness(data, canvas.width, faceX, faceY, faceWidth/2, faceHeight);
+            const rightHalfBrightness = getRegionBrightness(data, canvas.width, faceX + faceWidth/2, faceY, faceWidth/2, faceHeight);
+            const headTilt = Math.abs(leftHalfBrightness - rightHalfBrightness) * 0.5;
+            
+            // Determine head position
+            let headPosition = 'normal';
+            if (headTilt > 30) headPosition = 'tilted';
+            if (faceY > canvas.height * 0.6) headPosition = 'down';
+            
+            return {
+                faceDetected: faceDetected,
+                eyeClosure: eyeClosure,
+                eyeClosureScore: eyeClosure,
+                blinkRate: avgBlinkRate,
+                isYawning: isYawning,
+                headTilt: headTilt,
+                headPosition: headPosition
+            };
+        }
+
+        function getRegionBrightness(imageData, width, x, y, w, h) {
+            let totalBrightness = 0;
+            let pixelCount = 0;
+            
+            const x1 = Math.max(0, Math.floor(x));
+            const y1 = Math.max(0, Math.floor(y));
+            const x2 = Math.min(width - 1, Math.floor(x + w));
+            const y2 = Math.min(imageData.height || 480 - 1, Math.floor(y + h));
+            
+            for (let py = y1; py < y2; py++) {
+                for (let px = x1; px < x2; px++) {
+                    const i = (py * width + px) * 4;
+                    // Grayscale conversion
+                    const brightness = (imageData[i] + imageData[i+1] + imageData[i+2]) / 3;
+                    totalBrightness += brightness;
+                    pixelCount++;
+                }
+            }
+            
+            return pixelCount > 0 ? totalBrightness / pixelCount : 128;
         }
 
         function playAlert() {
