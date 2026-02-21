@@ -787,60 +787,47 @@
             // Show processing indicator
             response.textContent = 'Processing...';
             
-            // Send to API
-            fetch(`${API_URL}/voice/command`, {
+            // Get token
+            const token = localStorage.getItem('token') || getCookie('token');
+            if (!token) {
+                response.textContent = 'Please log in to use voice commands.';
+                return;
+            }
+            
+            // Send to chatbot API
+            fetch(`${API_URL}/chatbot/chat`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${token}`
                 },
                 body: JSON.stringify({
-                    command: command,
-                    session_id: currentSessionId
+                    message: command
                 })
             })
             .then(res => res.json())
             .then(data => {
-                if (data.response) {
+                if (data.success && data.response) {
                     response.textContent = data.response;
+                    document.getElementById('transcript').textContent = command;
                     
                     if (autoSpeak) {
                         speak(data.response);
                     }
-                }
-                
-                // Handle specific actions
-                if (data.action === 'start_session') {
-                    currentSessionId = data.session_id;
-                } else if (data.action === 'emergency') {
-                    triggerEmergencyProtocol();
+                } else {
+                    response.textContent = 'I did not understand that. Please try again.';
                 }
             })
             .catch(err => {
                 console.error('Error processing command:', err);
-                response.textContent = 'Sorry, I did not understand that. Please try again.';
-                
-                // Handle common commands locally
-                handleLocalCommand(command);
+                response.textContent = 'Sorry, there was an error processing your request.';
             });
         }
 
-        function handleLocalCommand(command) {
-            // Local command handling for offline functionality
-            const responses = {
-                'hello': 'Hello! How can I assist you with your drive today?',
-                'hi': 'Hi there! Ready to help you with any driving concerns.',
-                'help': 'I can help you with fatigue levels, weather, black spots, starting or ending driving sessions, and safety tips. What would you like to know?',
-                'thank you': 'You\'re welcome! Stay safe on the road!',
-                'thanks': 'You\'re welcome! Stay safe!'
-            };
-
-            for (const [key, value] of Object.entries(responses)) {
-                if (command.includes(key)) {
-                    response.textContent = value;
-                    if (autoSpeak) speak(value);
-                    return;
-                }
-            }
+        function getCookie(name) {
+            const value = `; ${document.cookie}`;
+            const parts = value.split(`; ${name}=`);
+            if (parts.length === 2) return parts.pop().split(';').shift();
         }
 
         function speak(text) {
