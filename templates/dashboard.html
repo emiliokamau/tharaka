@@ -3,6 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="api-base" content="{{ request.base_url[:request.base_url.rfind('/')] }}">
     <title>Dashboard - Driver Safety Monitor</title>
     <style>
         * {
@@ -582,7 +583,10 @@
     </div>
 
     <script>
-        const API_URL = 'http://localhost:5000/api';
+        const metaApiBase = document.querySelector('meta[name="api-base"]')?.content;
+        const DEFAULT_API_BASE = metaApiBase || window.location.origin;
+        const API_BASE = (window.API_BASE_URL || DEFAULT_API_BASE).replace(/\/$/, '');
+        const API_URL = `${API_BASE}/api`;
         let currentSession = null;
         let cameraActive = false;
 

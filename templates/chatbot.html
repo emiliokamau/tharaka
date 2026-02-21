@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="api-base" content="https://tharaka.onrender.com">
+    <meta name="api-base" content="{{ request.base_url[:request.base_url.rfind('/')] }}">
     <title>AI Chatbot - Driver Safety Assistant</title>
     <style>
         * {
