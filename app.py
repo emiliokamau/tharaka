@@ -569,82 +569,78 @@ def get_health_history(driver_id):
 def chatbot_chat(driver_id):
     """Chat with AI chatbot"""
     data = request.get_json()
-    user_message = data.get('message', '').lower()
+    user_message = data.get('message', '').lower().strip()
     
     driver = Driver.query.get(driver_id)
+    if not driver:
+        return jsonify({'success': False, 'message': 'Driver not found'}), 404
     
-    # Get driver's current fatigue level
+    # Get driver's stats
     fatigue = driver.fatigue_level or 0
+    total_hours = round(driver.total_driving_hours, 1)
     
-    # Enhanced responses for all topics
-    responses = {
-        # Drowsiness related
-        'drowsy': f'I notice you might be getting drowsy. Your current fatigue level is {fatigue}%. Please take a break immediately. Your safety is our priority. Would you like information on nearby rest stops?',
-        'tired': f'If you\'re feeling tired, I recommend pulling over to rest. You\'ve been driving for {round(driver.total_driving_hours, 1)} hours. Driving while fatigued is dangerous.',
-        'sleepy': f'Don\'t fight drowsiness! Your fatigue level is {fatigue}%. Pull over in a safe location and take a 15-20 minute nap.',
-        'sleep': f'For optimal driving alertness, aim for 7-8 hours of sleep before a long trip. Naps of 20 minutes can help combat fatigue.',
-        'drowsiness': f'Drowsiness management is crucial. Your current fatigue level is {fatigue}%. Take breaks every 2 hours, stay hydrated, and avoid driving between midnight and 6am.',
-        'fatigue': f'Your current fatigue level is {fatigue}%. ' + ('This is high - please take a break soon!' if fatigue >= 60 else 'You appear alert. Keep up the good driving!'),
+    # Define all response patterns - more comprehensive matching
+    response_patterns = [
+        # Fatigue/Drowsiness
+        (['fatigue level', 'my fatigue', 'what is my fatigue'], 
+         f'Your current fatigue level is {fatigue}%. ' + 
+         ('⚠️ HIGH - Please take a break immediately!' if fatigue >= 60 else 
+          '✅ You are alert. Keep up safe driving!')),
         
-        # Black spots
-        'black spot': 'There are several high-risk areas on Kenyan roads. Major black spots include Nairobi-Mombasa Road, Thika Road, Mombasa Road Junction, and Nairobi Outer Ring. Stay alert and reduce speed in these zones. Would you like details about dangerous roads near your location?',
-        'dangerous': 'High-risk areas include: Nairobi-Mombasa Road (156 accidents), Mombasa Road Junction (145 accidents), Thika Road (101 accidents), and Eldoret-Nakuru Road (54 accidents). Drive cautiously in these areas.',
-        'accident': 'Road accidents in Kenya are often caused by speeding, fatigue, and distraction. The most dangerous roads are the Nairobi-Mombasa highway and major urban roads. Always wear seatbelts and follow traffic rules.',
+        (['drowsy', 'sleepy', 'tired', 'sleepiness', 'drowsiness'], 
+         f'I notice you might be getting drowsy. Fatigue at {fatigue}%. Please pull over safely and take a 15-20 minute break. Stay hydrated and stretch!'),
         
-        # Route risk
-        'route': 'I can help assess your route risk. Please provide your start and end locations, or enable location services for automated risk assessment along your journey.',
-        'risk': 'Route risk assessment analyzes road conditions, weather, black spots, and traffic patterns to determine safety levels. Would you like me to assess your planned route?',
+        (['sleep', 'nap', 'rest'], 
+         f'Optimal sleep before driving: 7-8 hours. Quick power naps (15-20 min) can boost alertness. You\'ve driven {total_hours} hours so far.'),
         
-        # Road safety
-        'safety': 'Road safety is our top priority! Key tips: 1) Always wear seatbelts, 2) Follow speed limits, 3) Avoid distractions, 4) Take regular breaks, 5) Never drive under the influence, 6) Use headlights at night.',
-        'speed': 'Speed limits in Kenya: Urban areas 50km/h, highways 100km/h, school zones 30km/h. Exceeding speed limits significantly increases accident risk.',
-        'seatbelt': 'Always wear your seatbelt - it reduces the risk of fatal injury by 45% for front-seat passengers. It\'s not just safe, it\'s the law!',
+        # Black Spots & Danger
+        (['black spot', 'where are the black', 'dangerous road', 'high risk', 'accident spot'], 
+         'Top dangerous roads in Kenya:\n• Nairobi-Mombasa Road (156 accidents)\n• Mombasa Road Junction (145 accidents)\n• Thika Road (101 accidents)\n• Eldoret-Nakuru Road (54 accidents)\nStay alert and reduce speed!'),
         
-        # Alerts
-        'alert': f'You have received an alert. Your current fatigue level is {fatigue}%. ' + ('Please take immediate action - consider stopping for a break.' if fatigue >= 60 else 'Continue safe driving but stay aware of your alertness.'),
-        'warning': 'Alerts are triggered when: drowsiness is detected, fatigue level exceeds 60%, or you\'ve been driving for more than 4 hours continuously. Always respond to safety warnings.',
+        # Sessions
+        (['start session', 'start driving', 'begin trip'], 
+         '✅ Driving session started! Stay safe and remember to take breaks every 2 hours.'),
         
-        # Weather
-        'weather': 'Current weather conditions may vary. In rainy weather, reduce speed, increase following distance, and use headlights. Check local weather updates before and during your trip.',
-        'rain': 'When driving in rain: reduce speed, use headlights, increase following distance, avoid sudden braking, and watch for flooding on roads.',
+        (['end session', 'end driving', 'finish trip', 'stop driving'], 
+         f'✅ Driving session ended! You\'ve driven {total_hours} hours total. Well done on safe driving!'),
         
-        # General help
-        'help': 'I can help you with: drowsiness detection, black spot warnings, route risk assessment, safety information, weather updates, and health tracking. What do you need?',
-        'hello': f'Hello {driver.full_name}! How can I assist with your safe driving today?',
-        'hi': f'Hi {driver.full_name}! Ready to help with road safety information.',
-    }
+        # Safety Tips
+        (['safety', 'safety tip', 'safe driving', 'how to drive safe'], 
+         '🚗 Road Safety Tips:\n1. Always wear seatbelts\n2. Follow speed limits (Urban: 50km/h, Highway: 100km/h)\n3. Avoid distractions\n4. Take breaks every 2 hours\n5. Never drive under influence\n6. Use headlights at night\n7. Check weather conditions'),
+        
+        (['weather', 'what is the weather', 'weather condition'], 
+         'Current weather affects driving safety. Rain reduces traction, fog reduces visibility. Check weather before long trips!'),
+        
+        # Driving Time
+        (['how long', 'driving time', 'total hours', 'hours driven'], 
+         f'You\'ve been driving {total_hours} hours total. Remember to take a 15-minute break for every 2 hours of driving!'),
+        
+        # Music
+        (['music', 'play music', 'song'], 
+         '🎵 Playing relaxing driving music to keep you alert and focused on the road!'),
+        
+        # Help & Info
+        (['help', 'what can you do', 'assist me'], 
+         'I can help with:\n✅ Fatigue monitoring\n✅ Black spot warnings\n✅ Safety tips\n✅ Route risk assessment\n✅ Session tracking\n✅ Emergency alerts\nJust ask naturally!'),
+    ]
     
     # Find matching response
-    bot_response = 'I\'m here to help with your safety while driving. Ask me about drowsiness alerts, black spots, safety tips, weather, or your health status. You can also click the Quick Actions buttons.',
-    
-    for keyword, response in responses.items():
-        if keyword in user_message:
+    bot_response = None
+    for keywords, response in response_patterns:
+        if any(keyword in user_message for keyword in keywords):
             bot_response = response
             break
     
-    # Special handling for questions
-    if '?' in user_message:
-        if 'fatigue' in user_message or 'tired' in user_message:
-            bot_response = f'Your current fatigue level is {fatigue}%. ' + ('This is HIGH - please take a break soon!' if fatigue >= 60 else 'You appear to be doing well. Keep driving safely!')
-        elif 'black spot' in user_message:
-            bot_response = 'Major black spots in Kenya include: Nairobi-Mombasa Road (HIGH risk, 156 accidents), Thika Road (HIGH risk, 101 accidents), Mombasa Road Junction (HIGH risk, 145 accidents). Stay extra cautious in these areas.'
-        elif 'safety tip' in user_message:
-            import random
-            tips = [
-                'Take a 15-minute break every 2 hours of driving.',
-                'Never drive if you feel sleepy - even a short nap can help.',
-                'Keep a safe distance from other vehicles.',
-                'Check your mirrors every 5-10 seconds.',
-                'Stay hydrated - dehydration can cause fatigue.',
-                'Avoid heavy meals before driving.',
-                'Use the 20-minute nap rule to combat drowsiness.'
-            ]
-            bot_response = f'Here\'s a safety tip: {random.choice(tips)}'
+    # Default response if no match
+    if not bot_response:
+        bot_response = f'I\'m here to help with road safety! You can ask about your fatigue level ({fatigue}%), black spots, safety tips, or session tracking. What would you like to know?'
     
     return jsonify({
         'success': True,
         'response': bot_response,
-        'driver_name': driver.full_name
+        'driver_name': driver.full_name,
+        'fatigue_level': fatigue,
+        'total_hours': total_hours
     }), 200
 
 @app.route('/api/chatbot/location-info', methods=['GET'])
