@@ -23,9 +23,16 @@ import jwt
 import json
 import math
 import os
+import base64
 from functools import wraps
 from predict_risk import AccidentPredictor
 from database import db, Driver, DrivingSession, HealthRecord, init_db
+try:
+    from model_inference_simple import get_detector
+    ML_MODEL_AVAILABLE = True
+except ImportError:
+    ML_MODEL_AVAILABLE = False
+    print("⚠️  ML model inference module not available. Run train_model.py first.")
 
 # ============================================================================
 # INITIALIZE FLASK APP
@@ -331,53 +338,84 @@ def get_statistics(driver_id):
 @app.route('/api/drowsiness/assess', methods=['POST'])
 @token_required
 def assess_drowsiness(driver_id):
-    """Assess drowsiness from facial data"""
+    """Assess drowsiness using ML model or fallback manual calculation"""
     data = request.get_json()
     
-    eye_closure = data.get('eye_closure_percentage', 0)
-    blink_freq = data.get('blink_frequency', 15)
-    head_pos = data.get('head_position', 'normal')
-    yawn = data.get('yawn_detected', False)
-    hours_driven = data.get('hours_driven', 0)
+    driver = Driver.query.get(driver_id)
+    if not driver:
+        return jsonify({'success': False, 'message': 'Driver not found'}), 404
     
-    # Calculate fatigue score
+    # Get driver's current stats
     fatigue_score = 0
-    fatigue_score += eye_closure * 0.4  # Eye closure: 0-40 points
+    alert_level = 'safe'
+    recommendation = ''
+    model_used = False
     
-    if blink_freq < 8 or blink_freq > 20:
-        fatigue_score += 25
-    else:
-        fatigue_score += (abs(blink_freq - 15) / 15) * 10
+    # OPTION 1: Use ML model if available and image provided
+    if ML_MODEL_AVAILABLE and 'image' in data:
+        try:
+            detector = get_detector()
+            image_data = data.get('image')
+            
+            # Predict using ML model
+            prediction = detector.predict(image_data)
+            
+            if prediction.get('success'):
+                fatigue_score = prediction.get('fatigue_level', 0)
+                alert_level = prediction.get('alert_level', 'safe')
+                recommendation = prediction.get('recommendation', '')
+                model_used = True
+                
+                print(f"✅ ML Model Prediction - Fatigue: {fatigue_score}%")
+        
+        except Exception as e:
+            print(f"⚠️  ML prediction failed: {e}. Falling back to manual calculation.")
     
-    if head_pos == 'down':
-        fatigue_score += 20
-    elif head_pos == 'tilted':
-        fatigue_score += 10
-    
-    if yawn:
-        fatigue_score += 15
-    
-    if hours_driven > 6:
-        fatigue_score += 15
-    
-    fatigue_score = min(100, max(0, fatigue_score))
-    
-    # Determine alert level
-    if fatigue_score >= 80:
-        alert_level = 'critical'
-        recommendation = '🚨 CRITICAL: Pull over IMMEDIATELY and rest 15 minutes!'
-    elif fatigue_score >= 60:
-        alert_level = 'warning'
-        recommendation = '⚠️ WARNING: Take a break soon'
-    elif fatigue_score >= 30:
-        alert_level = 'info'
-        recommendation = '[OK] You appear alert. Continue safe driving'
-    else:
-        alert_level = 'safe'
-        recommendation = '[OK] Great! You are alert. Keep up good driving'
+    # OPTION 2: Fallback to manual facial features calculation
+    if not model_used:
+        eye_closure = data.get('eye_closure_percentage', 0)
+        blink_freq = data.get('blink_frequency', 15)
+        head_pos = data.get('head_position', 'normal')
+        yawn = data.get('yawn_detected', False)
+        hours_driven = data.get('hours_driven', 0)
+        
+        # Calculate fatigue score
+        fatigue_score = 0
+        fatigue_score += eye_closure * 0.4  # Eye closure: 0-40 points
+        
+        if blink_freq < 8 or blink_freq > 20:
+            fatigue_score += 25
+        else:
+            fatigue_score += (abs(blink_freq - 15) / 15) * 10
+        
+        if head_pos == 'down':
+            fatigue_score += 20
+        elif head_pos == 'tilted':
+            fatigue_score += 10
+        
+        if yawn:
+            fatigue_score += 15
+        
+        if hours_driven > 6:
+            fatigue_score += 15
+        
+        fatigue_score = min(100, max(0, fatigue_score))
+        
+        # Determine alert level
+        if fatigue_score >= 80:
+            alert_level = 'critical'
+            recommendation = '🚨 CRITICAL: Pull over IMMEDIATELY and rest 15 minutes!'
+        elif fatigue_score >= 60:
+            alert_level = 'warning'
+            recommendation = '⚠️ WARNING: Take a break soon'
+        elif fatigue_score >= 30:
+            alert_level = 'info'
+            recommendation = '[OK] You appear alert. Continue safe driving'
+        else:
+            alert_level = 'safe'
+            recommendation = '[OK] Great! You are alert. Keep up good driving'
     
     # Save to database
-    driver = Driver.query.get(driver_id)
     driver.fatigue_level = int(fatigue_score)
     driver.last_fatigue_assessment = datetime.utcnow()
     
@@ -385,11 +423,11 @@ def assess_drowsiness(driver_id):
         driver_id=driver_id,
         assessment_type='drowsiness',
         fatigue_level=int(fatigue_score),
-        eye_closure_percentage=eye_closure,
-        blink_frequency=blink_freq,
-        head_position=head_pos,
-        yawn_detected=yawn,
-        hours_driven=hours_driven,
+        eye_closure_percentage=data.get('eye_closure_percentage', 0),
+        blink_frequency=data.get('blink_frequency', 15),
+        head_position=data.get('head_position', 'normal'),
+        yawn_detected=data.get('yawn_detected', False),
+        hours_driven=data.get('hours_driven', 0),
         recommendation=recommendation,
         alert_sent=(alert_level in ['critical', 'warning'])
     )
@@ -402,11 +440,13 @@ def assess_drowsiness(driver_id):
         'fatigue_level': round(fatigue_score, 1),
         'alert_level': alert_level,
         'recommendation': recommendation,
+        'model_used': model_used,
+        'model_available': ML_MODEL_AVAILABLE,
         'details': {
-            'eye_closure': eye_closure,
-            'blink_frequency': blink_freq,
-            'head_position': head_pos,
-            'yawn_detected': yawn
+            'eye_closure': data.get('eye_closure_percentage', 0),
+            'blink_frequency': data.get('blink_frequency', 15),
+            'head_position': data.get('head_position', 'normal'),
+            'yawn_detected': data.get('yawn_detected', False)
         }
     }), 200
 
