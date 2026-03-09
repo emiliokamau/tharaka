@@ -12,3 +12,13 @@ venv/
 .venv/
 .dist/
 *.log
+
+# Extras and documentation (not needed for project to work)
+extras/
+docs/
+
+# Data files (PDFs)
+*.pdf
+
+# Model reports
+model_reports/
