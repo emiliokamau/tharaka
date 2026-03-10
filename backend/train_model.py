@@ -31,6 +31,7 @@ EPOCHS = 30
 VALIDATION_SPLIT = 0.2
 TEST_SPLIT = 0.1
 
+
 def create_model_directory():
     """Create models directory if it doesn't exist"""
     if not os.path.exists(MODEL_DIR):
