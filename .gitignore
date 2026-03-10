@@ -16,9 +16,18 @@ venv/
 # Extras and documentation (not needed for project to work)
 extras/
 docs/
+*.md
 
 # Data files (PDFs)
 *.pdf
 
 # Model reports
 model_reports/
+
+# Binary files - models and databases
+*.pkl
+*.db
+instance/
+backend/instance/
+backend/models/
+models/
