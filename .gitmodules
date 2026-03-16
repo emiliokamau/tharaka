@@ -1,0 +1,15 @@
+[submodule "research/OpenSeeFace"]
+	path = research/OpenSeeFace
+	url = https://github.com/emilianavt/OpenSeeFace.git
+[submodule "research/L2CS-Net"]
+	path = research/L2CS-Net
+	url = https://github.com/Ahmednull/L2CS-Net.git
+[submodule "research/driver_monitoring"]
+	path = research/driver_monitoring
+	url = https://github.com/jhan15/driver_monitoring.git
+[submodule "research/ViT-DD"]
+	path = research/ViT-DD
+	url = https://github.com/PurdueDigitalTwin/ViT-DD.git
+[submodule "research/GuardianDrive-AI"]
+	path = research/GuardianDrive-AI
+	url = https://github.com/atharvakarval-dev/GuardianDrive-AI.git
